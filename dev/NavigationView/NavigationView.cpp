@@ -1048,10 +1048,10 @@ void NavigationView::OnLayoutUpdated(const winrt::IInspectable& sender, const wi
     {
         AnimateSelectionChanged(lastSelectedItemInTopNav, SelectedItem());
     }
-    else
-    {
-        AnimateSelectionChanged(nullptr, SelectedItem());
-    }
+    //else
+    //{
+    //    AnimateSelectionChanged(nullptr, SelectedItem());
+    //}
 }
 
 void NavigationView::OnSizeChanged(winrt::IInspectable const& /*sender*/, winrt::SizeChangedEventArgs const& args)
@@ -1182,7 +1182,7 @@ void NavigationView::OpenPane()
 // Call this when you want an uncancellable close
 void NavigationView::ClosePane()
 {
-    CollapseAllMenuItems(m_leftNavRepeater.get());
+    CollapseAllMenuItemsUnderRepeater(m_leftNavRepeater.get());
     auto scopeGuard = gsl::finally([this]()
         {
             m_isOpenPaneForInteraction = false;
@@ -1489,8 +1489,11 @@ void NavigationView::AnimateSelectionChangedToItem(const winrt::IInspectable& se
 // when the layout is invalidated as it's called in OnLayoutUpdated.
 void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem, const winrt::IInspectable& nextItem)
 {
-    winrt::UIElement prevIndicator = FindSelectionIndicator(prevItem);
-    winrt::UIElement nextIndicator = FindSelectionIndicator(nextItem);
+    auto const prevContainer = NavigationViewItemOrSettingsContentFromData(prevItem);
+    auto const nextContainer = NavigationViewItemOrSettingsContentFromData(nextItem);
+
+    winrt::UIElement prevIndicator = FindSelectionIndicator(prevContainer);
+    winrt::UIElement nextIndicator = FindSelectionIndicator(nextContainer);
 
     bool haveValidAnimation = false;
     // It's possible that AnimateSelectionChanged is called multiple times before the first animation is complete.
@@ -1519,6 +1522,15 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
 
         if ((prevItem != nextItem) && paneContentGrid && prevIndicator && nextIndicator && SharedHelpers::IsAnimationsEnabled())
         {
+            // If SelectionIndicator of actual selected item is not visible, animate from the visible parent indicator
+            if (auto const parentIndicator = m_parentIndicator.get())
+            {
+                // We still need to hide the selectedItem indicator in case selection is changed while its kept hidden
+                prevIndicator.Opacity(0.0);
+                prevIndicator = parentIndicator;
+                m_parentIndicator.set(nullptr);
+            }
+
             // Make sure both indicators are visible and in their original locations
             ResetElementAnimationProperties(prevIndicator, 1.0f);
             ResetElementAnimationProperties(nextIndicator, 1.0f);
@@ -1553,36 +1565,62 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
                 previousSize = prevSize.Height;
             }
 
-            winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(*this);
-            winrt::CompositionScopedBatch scopedBatch = visual.Compositor().CreateScopedBatch(winrt::CompositionBatchTypes::Animation);
+            if (!areElementsAtSameDepth)
+            {
+                // TODO: Add Top Nav side dissapearing animations
+                bool isNextBelow = prevPosPoint.Y < nextPosPoint.Y;
 
-            float outgoingEndPosition = static_cast<float>(areElementsAtSameDepth ? nextPos - prevPos : previousSize * increment);
-            float incomingStartPosition = static_cast<float>(areElementsAtSameDepth ? prevPos - nextPos : -previousSize * increment);
+                winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(*this);
+                winrt::CompositionScopedBatch scopedBatch = visual.Compositor().CreateScopedBatch(winrt::CompositionBatchTypes::Animation);
 
-            // Play the animation on both the previous and next indicators
-            PlayIndicatorAnimations(prevIndicator,
-                0,
-                outgoingEndPosition,
-                prevSize,
-                nextSize,
-                true);
-            PlayIndicatorAnimations(nextIndicator,
-                incomingStartPosition,
-                0,
-                prevSize,
-                nextSize,
-                false);
+                PlayIndicatorNonSameLevelAnimations(prevIndicator, true, isNextBelow ? false : true);
+                PlayIndicatorNonSameLevelAnimations(nextIndicator, false, isNextBelow ? true : false);
 
-            scopedBatch.End();
-            m_prevIndicator.set(prevIndicator);
-            m_nextIndicator.set(nextIndicator);
+                scopedBatch.End();
+                m_prevIndicator.set(prevIndicator);
+                m_nextIndicator.set(nextIndicator);
 
-            auto strongThis = get_strong();
-            scopedBatch.Completed(
-                [strongThis](auto sender, auto args)
-                {
-                    strongThis->OnAnimationComplete(sender, args);
-                });
+                auto strongThis = get_strong();
+                scopedBatch.Completed(
+                    [strongThis](auto sender, auto args)
+                    {
+                        strongThis->OnAnimationComplete(sender, args);
+                    });
+
+            }
+            else
+            {
+                winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(*this);
+                winrt::CompositionScopedBatch scopedBatch = visual.Compositor().CreateScopedBatch(winrt::CompositionBatchTypes::Animation);
+
+                float outgoingEndPosition = static_cast<float>(areElementsAtSameDepth ? nextPos - prevPos : previousSize * increment);
+                float incomingStartPosition = static_cast<float>(areElementsAtSameDepth ? prevPos - nextPos : -previousSize * increment);
+
+                // Play the animation on both the previous and next indicators
+                PlayIndicatorAnimations(prevIndicator,
+                    0,
+                    outgoingEndPosition,
+                    prevSize,
+                    nextSize,
+                    true);
+                PlayIndicatorAnimations(nextIndicator,
+                    incomingStartPosition,
+                    0,
+                    prevSize,
+                    nextSize,
+                    false);
+
+                scopedBatch.End();
+                m_prevIndicator.set(prevIndicator);
+                m_nextIndicator.set(nextIndicator);
+
+                auto strongThis = get_strong();
+                scopedBatch.Completed(
+                    [strongThis](auto sender, auto args)
+                    {
+                        strongThis->OnAnimationComplete(sender, args);
+                    });
+            }
         }
         else
         {
@@ -1602,6 +1640,30 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
             }
         }
     }
+}
+
+void NavigationView::PlayIndicatorNonSameLevelAnimations(const winrt::UIElement& indicator, bool isOutgoing, bool fromTop)
+{
+    winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(indicator);
+    winrt::Compositor comp = visual.Compositor();
+
+    // Determine scaling of indicator (whether it is appearing or dissapearing)
+    float beginScale = isOutgoing ? 1.0f : 0.0f;
+    float endScale = isOutgoing ? 0.0f : 1.0f;
+    winrt::ScalarKeyFrameAnimation scaleAnim = comp.CreateScalarKeyFrameAnimation();
+    scaleAnim.InsertKeyFrame(0.0f, beginScale);
+    scaleAnim.InsertKeyFrame(1.0f, endScale);
+    scaleAnim.Duration(600ms);
+
+    // Determine where the indicator is animating from/to
+    winrt::Size size = indicator.RenderSize();
+    float dimension = IsTopNavigationView() ? size.Width : size.Height;
+    float newCenter = fromTop ? 0.0f : dimension;
+    auto indicatorCenterPoint = visual.CenterPoint();
+    indicatorCenterPoint.y = newCenter;
+    visual.CenterPoint(indicatorCenterPoint);
+
+    visual.StartAnimation(L"Scale.Y", scaleAnim);
 }
 
 void NavigationView::PlayIndicatorAnimations(const winrt::UIElement& indicator, float from, float to, winrt::Size beginSize, winrt::Size endSize, bool isOutgoing)
@@ -1725,16 +1787,12 @@ bool NavigationView::ShouldPreserveNavigationViewRS3Behavior()
     return !m_backButton;
 }
 
-winrt::UIElement NavigationView::FindSelectionIndicator(const winrt::IInspectable& item)
+winrt::UIElement NavigationView::FindSelectionIndicator(const winrt::NavigationViewItem& container)
 {
-    if (item)
+    if (container)
     {
-        if (auto nvi = NavigationViewItemOrSettingsContentFromData(item))
-        {
-            return winrt::get_self<NavigationViewItem>(nvi)->GetSelectionIndicator();
-        }
+        return winrt::get_self<NavigationViewItem>(container)->GetSelectionIndicator();
     }
-
     return nullptr;
 }
 
@@ -2856,7 +2914,7 @@ void NavigationView::SelectOverflowItem(winrt::IInspectable const& item, winrt::
         {
             auto indexOfParentInOverflow = m_topDataProvider.ConvertOriginalIndexToIndex(ip.GetAt(0));
             // We want to make sure that container is collapsed before movement
-            CollapseAllMenuItems(m_topNavRepeaterOverflowView.get());
+            CollapseAllMenuItemsUnderRepeater(m_topNavRepeaterOverflowView.get());
             return GetItemFromIndex(m_topNavRepeaterOverflowView.get(), indexOfParentInOverflow);
         }
         return item;
@@ -3260,7 +3318,7 @@ void NavigationView::OnPropertyChanged(const winrt::DependencyPropertyChangedEve
         // When PaneDisplayMode is changed, reset the force flag to make the Pane can be opened automatically again.
         m_wasForceClosed = false;
 
-        CollapseAllTopLevelMenuItems(auto_unbox(args.OldValue()));
+        CollapseAllMenuItems(auto_unbox(args.OldValue()));
         UpdatePaneToggleButtonVisibility();
         UpdatePaneDisplayMode(auto_unbox(args.OldValue()), auto_unbox(args.NewValue()));
         UpdatePaneTitleFrameworkElementParents();
@@ -4515,6 +4573,37 @@ void NavigationView::ShowHideChildrenItemsRepeater(const winrt::NavigationViewIt
     {
         nvi.IsExpanded() ? m_lastItemExpandedIntoFlyout.set(nvi) : m_lastItemExpandedIntoFlyout.set(nullptr);
     }
+
+    // Keep track of selection indicator if selected item is being hidden/shown
+    if (nviImpl->ShowSelectionIndicatorIfRequired())
+    {
+        if (auto const prevParentIndicator = m_parentIndicator.get())
+        {
+            prevParentIndicator.Opacity(0.0);
+        }
+        m_parentIndicator.set(FindSelectionIndicator(nvi));
+    }
+    else if (nvi.IsChildSelected() && nvi.IsExpanded())
+    {
+        m_parentIndicator.set(nullptr);
+        auto const childrenRepeater = nviImpl->GetRepeater();
+        for (int i = 0; i < childrenRepeater.ItemsSourceView().Count(); i++)
+        {
+            if (auto const childContainer = childrenRepeater.TryGetElement(i))
+            {
+                if (auto const childNVI = childContainer.try_as<winrt::NavigationViewItem>())
+                {
+                    if (winrt::get_self<NavigationViewItem>(childNVI)->ShowSelectionIndicatorIfRequired())
+                    {
+                        m_parentIndicator.set(FindSelectionIndicator(childNVI));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    nviImpl->RotateExpandCollapseChevron(nvi.IsExpanded());
 }
 
 winrt::IInspectable NavigationView::GetChildren(const winrt::NavigationViewItem& nvi)
@@ -4636,21 +4725,21 @@ winrt::IInspectable NavigationView::GetChildrenForItemInIndexPath(const winrt::U
     return nullptr;
 }
 
-void NavigationView::CollapseAllTopLevelMenuItems(winrt::NavigationViewPaneDisplayMode oldDisplayMode)
+void NavigationView::CollapseAllMenuItems(winrt::NavigationViewPaneDisplayMode oldDisplayMode)
 {
     // We want to make sure only top level items are visible when switching pane modes
     if (oldDisplayMode == winrt::NavigationViewPaneDisplayMode::Top)
     {
-        CollapseAllMenuItems(m_topNavRepeater.get());
-        CollapseAllMenuItems(m_topNavRepeaterOverflowView.get());
+        CollapseAllMenuItemsUnderRepeater(m_topNavRepeater.get());
+        CollapseAllMenuItemsUnderRepeater(m_topNavRepeaterOverflowView.get());
     }
     else
     {
-        CollapseAllMenuItems(m_leftNavRepeater.get());
+        CollapseAllMenuItemsUnderRepeater(m_leftNavRepeater.get());
     }
 }
 
-void NavigationView::CollapseAllMenuItems(const winrt::ItemsRepeater& ir)
+void NavigationView::CollapseAllMenuItemsUnderRepeater(const winrt::ItemsRepeater& ir)
 {
     for (int index = 0; index < GetContainerCountInRepeater(ir); index++)
     {
@@ -4658,6 +4747,7 @@ void NavigationView::CollapseAllMenuItems(const winrt::ItemsRepeater& ir)
         {
             if (auto const nvi = element.try_as<winrt::NavigationViewItem>())
             {
+                CollapseAllMenuItemsUnderRepeater(winrt::get_self<NavigationViewItem>(nvi)->GetRepeater());
                 ChangeIsExpandedNavigationViewItem(nvi, false /*isExpanded*/);
             }
         }

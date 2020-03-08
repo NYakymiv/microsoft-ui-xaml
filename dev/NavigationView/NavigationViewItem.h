@@ -70,6 +70,8 @@ public:
     bool IsTopLevelItem() { return m_isTopLevelItem; };
 
     void OnExpandCollapseChevronTapped(const winrt::IInspectable& sender, const winrt::TappedRoutedEventArgs& args);
+    bool ShowSelectionIndicatorIfRequired();
+    void RotateExpandCollapseChevron(bool isExpanded);
 
 private:
     void UpdateNavigationViewItemToolTip();
@@ -106,7 +108,6 @@ private:
     void PropagateDepthToChildren(int depth);
     void UpdateItemIndentation();
     bool IsRepeaterVisible();
-    void ShowSelectionIndicatorIfRequired();
     void ShowSelectionIndicator(bool visible);
 
     PropertyChanged_revoker m_splitViewIsPaneOpenChangedRevoker{};

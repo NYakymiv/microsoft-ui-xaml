@@ -57,7 +57,7 @@ public:
 
     void OnSettingsInvoked();
 
-    winrt::UIElement FindSelectionIndicator(const winrt::IInspectable& item);
+    winrt::UIElement FindSelectionIndicator(const winrt::NavigationViewItem& container);
 
     static void CreateAndAttachHeaderAnimation(const winrt::Visual& visual);
 
@@ -136,8 +136,8 @@ private:
     void ShowHideChildrenItemsRepeater(const winrt::NavigationViewItem& nvi);
     void UpdateIsChildSelectedForIndexPath(const winrt::IndexPath& ip, bool isChildSelected);
     void UpdateIsChildSelected(const winrt::IndexPath& prevIP, const winrt::IndexPath& nextIP);
-    void CollapseAllTopLevelMenuItems(winrt::NavigationViewPaneDisplayMode oldDisplayMode);
-    void CollapseAllMenuItems(const winrt::ItemsRepeater& ir);
+    void CollapseAllMenuItems(winrt::NavigationViewPaneDisplayMode oldDisplayMode);
+    void CollapseAllMenuItemsUnderRepeater(const winrt::ItemsRepeater& ir);
     void RaiseExpandingEvent(const winrt::NavigationViewItemBase& container);
     void RaiseCollapsedEvent(const winrt::NavigationViewItemBase& container);
     void CloseFlyoutIfRequired(const winrt::IndexPath& selectedIndex);
@@ -272,6 +272,7 @@ private:
     void AnimateSelectionChanged(const winrt::IInspectable& lastItem, const winrt::IInspectable& currentItem);
     void AnimateSelectionChangedToItem(const winrt::IInspectable& selectedItem);
     void PlayIndicatorAnimations(const winrt::UIElement& indicator, float yFrom, float yTo, winrt::Size beginSize, winrt::Size endSize, bool isOutgoing);
+    void PlayIndicatorNonSameLevelAnimations(const winrt::UIElement& indicator, bool isOutgoing, bool fromTop);
     void OnAnimationComplete(const winrt::IInspectable& sender, const winrt::CompositionBatchCompletedEventArgs& args);
     void ResetElementAnimationProperties(const winrt::UIElement& element, float desiredOpacity);
     winrt::NavigationViewItem NavigationViewItemOrSettingsContentFromData(const winrt::IInspectable& data);
@@ -338,6 +339,7 @@ private:
 
     tracker_ref<winrt::UIElement> m_prevIndicator{ this };
     tracker_ref<winrt::UIElement> m_nextIndicator{ this };
+    tracker_ref<winrt::UIElement> m_parentIndicator{ this };
 
     tracker_ref<winrt::FrameworkElement> m_togglePaneTopPadding{ this };
     tracker_ref<winrt::FrameworkElement> m_contentPaneTopPadding{ this };

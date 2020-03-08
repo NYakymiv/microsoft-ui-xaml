@@ -263,7 +263,7 @@ void NavigationViewItem::OnMenuItemsSourcePropertyChanged(const winrt::Dependenc
 
 void NavigationViewItem::OnIsChildSelectedPropertyChanged(const winrt::DependencyPropertyChangedEventArgs& args)
 {
-    ShowSelectionIndicatorIfRequired();
+    //ShowSelectionIndicatorIfRequired();
 }
 
 void NavigationViewItem::OnHasUnrealizedChildrenPropertyChanged(const winrt::DependencyPropertyChangedEventArgs& args)
@@ -271,19 +271,21 @@ void NavigationViewItem::OnHasUnrealizedChildrenPropertyChanged(const winrt::Dep
     UpdateVisualStateForChevron();
 }
 
-void NavigationViewItem::ShowSelectionIndicatorIfRequired()
+bool NavigationViewItem::ShowSelectionIndicatorIfRequired()
 {
     if (!IsSelected())
     {
         if (!IsRepeaterVisible() && IsChildSelected())
         {
             ShowSelectionIndicator(true);
+            return true;
         }
         else
         {
             ShowSelectionIndicator(false);
         }
     }
+    return false;
 }
 
 void NavigationViewItem::ShowSelectionIndicator(bool visible)
@@ -533,20 +535,20 @@ void NavigationViewItem::SetRepeaterVisibilityAndUpdatePositionIfRequired(bool s
     auto visibility = shouldShowRepeater ? winrt::Visibility::Visible : winrt::Visibility::Collapsed;
     m_repeater.get().Visibility(visibility);
 
-
-    if (ShouldRepeaterShowInFlyout() && shouldShowRepeater)
+    if (ShouldRepeaterShowInFlyout())
     {
-        winrt::FlyoutBase::ShowAttachedFlyout(m_rootGrid.get());
-    }
-    else if(ShouldRepeaterShowInFlyout() && !shouldShowRepeater)
-    {
-        if (auto const flyout = winrt::FlyoutBase::GetAttachedFlyout(m_rootGrid.get()))
+        if (shouldShowRepeater)
         {
-            flyout.Hide();
+            winrt::FlyoutBase::ShowAttachedFlyout(m_rootGrid.get());
+        }
+        else
+        {
+            if (auto const flyout = winrt::FlyoutBase::GetAttachedFlyout(m_rootGrid.get()))
+            {
+                flyout.Hide();
+            }
         }
     }
-
-    ShowSelectionIndicatorIfRequired();
 }
 
 void NavigationViewItem::ReparentRepeater()
@@ -742,4 +744,9 @@ void NavigationViewItem::OnPresenterPointerCaptureLost(const winrt::IInspectable
     m_isPressed = false;
     m_isPointerOver = false;
     UpdateVisualState(true);
+}
+
+void NavigationViewItem::RotateExpandCollapseChevron(bool isExpanded)
+{
+    winrt::get_self<NavigationViewItemPresenter>(m_navigationViewItemPresenter.get())->RotateExpandCollapseChevron(isExpanded);
 }
