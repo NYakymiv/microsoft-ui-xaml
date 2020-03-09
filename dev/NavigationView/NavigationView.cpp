@@ -249,7 +249,6 @@ void NavigationView::OnSelectionModelSelectionChanged(const winrt::SelectionMode
 
     if (setSelectedItem)
     {
-        CloseFlyoutIfRequired(selectedIndex);
         SetSelectedItemAndExpectItemInvokeWhenSelectionChangedIfNotInvokedFromAPI(selectedItem);
     }
 }
@@ -274,11 +273,24 @@ void NavigationView::SelectandMoveOverflowItem(winrt::IInspectable const& select
     }
 }
 
-void NavigationView::CloseFlyoutIfRequired(const winrt::IndexPath& selectedIndex)
+// We only need to close the flyout if the selected item is a leaf node
+void NavigationView::CloseFlyoutIfRequired()
 {
-    if (auto const rootItem = GetContainerForIndex(selectedIndex.GetAt(0)))
+    bool isInModeWithFlyout = [this]()
     {
-        if (auto const nvi = rootItem.try_as<winrt::NavigationViewItem>())
+        if (auto splitView = m_rootSplitView.get())
+        {
+            // Check if the pane is closed and if the splitview is in either compact mode.
+            auto splitViewDisplayMode = splitView.DisplayMode();
+            return (!splitView.IsPaneOpen() && (splitViewDisplayMode == winrt::SplitViewDisplayMode::CompactOverlay || splitViewDisplayMode == winrt::SplitViewDisplayMode::CompactInline)) ||
+                    PaneDisplayMode() == winrt::NavigationViewPaneDisplayMode::Top;
+        }
+        return false;
+    }();
+
+    if (isInModeWithFlyout)
+    {
+        if (auto const selectedIndex = m_selectionModel.SelectedIndex())
         {
             if (auto const selectedItem = GetContainerForIndexPath(selectedIndex))
             {
@@ -286,13 +298,21 @@ void NavigationView::CloseFlyoutIfRequired(const winrt::IndexPath& selectedIndex
                 {
                     if (!DoesNavigationViewItemHaveChildren(selectedNVI))
                     {
-                        auto const nviImpl = winrt::get_self<NavigationViewItem>(nvi);
-                        if (nviImpl->ShouldRepeaterShowInFlyout())
+                        // Item selected is a leaf node, find top level parent and close flyout
+                        if (auto const rootItem = GetContainerForIndex(selectedIndex.GetAt(0)))
                         {
-                            nviImpl->SetRepeaterVisibilityAndUpdatePositionIfRequired(false);
+                            if (auto const nvi = rootItem.try_as<winrt::NavigationViewItem>())
+                            {
+                                auto const nviImpl = winrt::get_self<NavigationViewItem>(nvi);
+                                if (nviImpl->ShouldRepeaterShowInFlyout())
+                                {
+                                    nviImpl->SetRepeaterVisibilityAndUpdatePositionIfRequired(false);
+                                }
+                            }
                         }
                     }
                 }
+
             }
         }
     }
@@ -721,7 +741,8 @@ void NavigationView::OnNavigationViewItemInvoked(const winrt::NavigationViewItem
         return;
     }
 
-    if (m_selectionModel && nvi.SelectsOnInvoked())
+    bool updateSelection = m_selectionModel && nvi.SelectsOnInvoked();
+    if (updateSelection)
     {
         auto ip = GetIndexPathForContainer(nvi);
         UpdateSelectionModelSelection(ip);
@@ -729,6 +750,11 @@ void NavigationView::OnNavigationViewItemInvoked(const winrt::NavigationViewItem
 
     ToggleIsExpandedNavigationViewItem(nvi);
     ClosePaneIfNeccessaryAfterItemIsClicked(nvi);
+
+    if (updateSelection)
+    {
+        CloseFlyoutIfRequired();
+    }
 }
 
 bool NavigationView::IsRootItemsRepeater(const winrt::DependencyObject& element)
@@ -1048,10 +1074,6 @@ void NavigationView::OnLayoutUpdated(const winrt::IInspectable& sender, const wi
     {
         AnimateSelectionChanged(lastSelectedItemInTopNav, SelectedItem());
     }
-    //else
-    //{
-    //    AnimateSelectionChanged(nullptr, SelectedItem());
-    //}
 }
 
 void NavigationView::OnSizeChanged(winrt::IInspectable const& /*sender*/, winrt::SizeChangedEventArgs const& args)
@@ -1546,35 +1568,32 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
             winrt::Size nextSize = nextIndicator.RenderSize();
 
             bool areElementsAtSameDepth = false;
-            int increment = 1;
-            double previousSize = 0.0;
             if (IsTopNavigationView())
             {
                 prevPos = prevPosPoint.X;
                 nextPos = nextPosPoint.X;
                 areElementsAtSameDepth = prevPosPoint.Y == nextPosPoint.Y;
-                increment = nextPos > prevPos ? 1 : -1;
-                previousSize = prevSize.Width;
             }
             else
             {
                 prevPos = prevPosPoint.Y;
                 nextPos = nextPosPoint.Y;
                 areElementsAtSameDepth = prevPosPoint.X == nextPosPoint.X;
-                increment = nextPos > prevPos ? 1 : -1;
-                previousSize = prevSize.Height;
             }
 
             if (!areElementsAtSameDepth)
             {
-                // TODO: Add Top Nav side dissapearing animations
-                bool isNextBelow = prevPosPoint.Y < nextPosPoint.Y;
-
                 winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(*this);
                 winrt::CompositionScopedBatch scopedBatch = visual.Compositor().CreateScopedBatch(winrt::CompositionBatchTypes::Animation);
 
-                PlayIndicatorNonSameLevelAnimations(prevIndicator, true, isNextBelow ? false : true);
-                PlayIndicatorNonSameLevelAnimations(nextIndicator, false, isNextBelow ? true : false);
+                bool isNextBelow = prevPosPoint.Y < nextPosPoint.Y;
+                prevIndicator.RenderSize().Height > prevIndicator.RenderSize().Width ?
+                    PlayIndicatorNonSameLevelAnimations(prevIndicator, true, isNextBelow ? false : true) :
+                    PlayIndicatorNonSameLevelTopPrimaryAnimation(prevIndicator, true);
+
+                prevIndicator.RenderSize().Height > prevIndicator.RenderSize().Width ?
+                    PlayIndicatorNonSameLevelAnimations(nextIndicator, false, isNextBelow ? true : false) :
+                    PlayIndicatorNonSameLevelTopPrimaryAnimation(nextIndicator, false);
 
                 scopedBatch.End();
                 m_prevIndicator.set(prevIndicator);
@@ -1593,8 +1612,8 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
                 winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(*this);
                 winrt::CompositionScopedBatch scopedBatch = visual.Compositor().CreateScopedBatch(winrt::CompositionBatchTypes::Animation);
 
-                float outgoingEndPosition = static_cast<float>(areElementsAtSameDepth ? nextPos - prevPos : previousSize * increment);
-                float incomingStartPosition = static_cast<float>(areElementsAtSameDepth ? prevPos - nextPos : -previousSize * increment);
+                float outgoingEndPosition = static_cast<float>(nextPos - prevPos);
+                float incomingStartPosition = static_cast<float>(prevPos - nextPos);
 
                 // Play the animation on both the previous and next indicators
                 PlayIndicatorAnimations(prevIndicator,
@@ -1664,6 +1683,30 @@ void NavigationView::PlayIndicatorNonSameLevelAnimations(const winrt::UIElement&
     visual.CenterPoint(indicatorCenterPoint);
 
     visual.StartAnimation(L"Scale.Y", scaleAnim);
+}
+
+
+void NavigationView::PlayIndicatorNonSameLevelTopPrimaryAnimation(const winrt::UIElement& indicator, bool isOutgoing)
+{
+    winrt::Visual visual = winrt::ElementCompositionPreview::GetElementVisual(indicator);
+    winrt::Compositor comp = visual.Compositor();
+
+    // Determine scaling of indicator (whether it is appearing or dissapearing)
+    float beginScale = isOutgoing ? 1.0f : 0.0f;
+    float endScale = isOutgoing ? 0.0f : 1.0f;
+    winrt::ScalarKeyFrameAnimation scaleAnim = comp.CreateScalarKeyFrameAnimation();
+    scaleAnim.InsertKeyFrame(0.0f, beginScale);
+    scaleAnim.InsertKeyFrame(1.0f, endScale);
+    scaleAnim.Duration(600ms);
+
+    // Determine where the indicator is animating from/to
+    winrt::Size size = indicator.RenderSize();
+    float newCenter = size.Width /2;
+    auto indicatorCenterPoint = visual.CenterPoint();
+    indicatorCenterPoint.y = newCenter;
+    visual.CenterPoint(indicatorCenterPoint);
+
+    visual.StartAnimation(L"Scale.X", scaleAnim);
 }
 
 void NavigationView::PlayIndicatorAnimations(const winrt::UIElement& indicator, float from, float to, winrt::Size beginSize, winrt::Size endSize, bool isOutgoing)
@@ -4574,34 +4617,47 @@ void NavigationView::ShowHideChildrenItemsRepeater(const winrt::NavigationViewIt
         nvi.IsExpanded() ? m_lastItemExpandedIntoFlyout.set(nvi) : m_lastItemExpandedIntoFlyout.set(nullptr);
     }
 
-    // Keep track of selection indicator if selected item is being hidden/shown
-    if (nviImpl->ShowSelectionIndicatorIfRequired())
+
+    // Keep track of selection indicator if selected item is being hidden/shown.
+    // If item is selected, then we do not have to handle showing selection indicator here.
+    if (!nvi.IsSelected())
     {
-        if (auto const prevParentIndicator = m_parentIndicator.get())
+        if (!nviImpl->IsRepeaterVisible() && nvi.IsChildSelected())
         {
-            prevParentIndicator.Opacity(0.0);
-        }
-        m_parentIndicator.set(FindSelectionIndicator(nvi));
-    }
-    else if (nvi.IsChildSelected() && nvi.IsExpanded())
-    {
-        m_parentIndicator.set(nullptr);
-        auto const childrenRepeater = nviImpl->GetRepeater();
-        for (int i = 0; i < childrenRepeater.ItemsSourceView().Count(); i++)
-        {
-            if (auto const childContainer = childrenRepeater.TryGetElement(i))
+            if (auto const prevParentIndicator = m_parentIndicator.get())
             {
-                if (auto const childNVI = childContainer.try_as<winrt::NavigationViewItem>())
+                prevParentIndicator.Opacity(0.0);
+            }
+            m_parentIndicator.set(FindSelectionIndicator(nvi));
+            AnimateSelectionChanged(nullptr, nvi);
+        }
+        else if (nvi.IsChildSelected() && nvi.IsExpanded())
+        {
+            // Verify if child item has to display a selection indicator
+            if (auto const prevParentIndicator = m_parentIndicator.get())
+            {
+                prevParentIndicator.Opacity(0.0);
+            }
+            m_parentIndicator.set(nullptr);
+            auto const childrenRepeater = nviImpl->GetRepeater();
+            for (int i = 0; i < childrenRepeater.ItemsSourceView().Count(); i++)
+            {
+                if (auto const childContainer = childrenRepeater.TryGetElement(i))
                 {
-                    if (winrt::get_self<NavigationViewItem>(childNVI)->ShowSelectionIndicatorIfRequired())
+                    if (auto const childNVI = childContainer.try_as<winrt::NavigationViewItem>())
                     {
-                        m_parentIndicator.set(FindSelectionIndicator(childNVI));
-                        break;
+                        if (!winrt::get_self<NavigationViewItem>(childNVI)->IsRepeaterVisible() && childNVI.IsChildSelected())
+                        {
+                            m_parentIndicator.set(FindSelectionIndicator(childNVI));
+                            AnimateSelectionChanged(nullptr, childNVI);
+                            break;
+                        }
                     }
                 }
             }
         }
     }
+
 
     nviImpl->RotateExpandCollapseChevron(nvi.IsExpanded());
 }

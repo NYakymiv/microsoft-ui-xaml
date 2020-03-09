@@ -72,6 +72,7 @@ public:
     void OnExpandCollapseChevronTapped(const winrt::IInspectable& sender, const winrt::TappedRoutedEventArgs& args);
     bool ShowSelectionIndicatorIfRequired();
     void RotateExpandCollapseChevron(bool isExpanded);
+    bool IsRepeaterVisible();
 
 private:
     void UpdateNavigationViewItemToolTip();
@@ -107,7 +108,6 @@ private:
     void OnFlyoutClosing(const winrt::IInspectable& sender, const winrt::FlyoutBaseClosingEventArgs& args);
     void PropagateDepthToChildren(int depth);
     void UpdateItemIndentation();
-    bool IsRepeaterVisible();
     void ShowSelectionIndicator(bool visible);
 
     PropertyChanged_revoker m_splitViewIsPaneOpenChangedRevoker{};
