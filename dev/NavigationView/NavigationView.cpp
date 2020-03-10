@@ -1581,7 +1581,7 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
                     PlayIndicatorNonSameLevelAnimations(prevIndicator, true, isNextBelow ? false : true) :
                     PlayIndicatorNonSameLevelTopPrimaryAnimation(prevIndicator, true);
 
-                prevIndicator.RenderSize().Height > prevIndicator.RenderSize().Width ?
+                nextIndicator.RenderSize().Height > nextIndicator.RenderSize().Width ?
                     PlayIndicatorNonSameLevelAnimations(nextIndicator, false, isNextBelow ? true : false) :
                     PlayIndicatorNonSameLevelTopPrimaryAnimation(nextIndicator, false);
 
