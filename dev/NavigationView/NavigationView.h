@@ -57,7 +57,7 @@ public:
 
     void OnSettingsInvoked();
 
-    winrt::UIElement FindSelectionIndicator(const winrt::NavigationViewItem& container);
+    winrt::UIElement FindSelectionIndicator(const winrt::IInspectable& item);
 
     static void CreateAndAttachHeaderAnimation(const winrt::Visual& visual);
 
@@ -134,6 +134,7 @@ private:
     void ToggleIsExpandedNavigationViewItem(const winrt::NavigationViewItem& nvi);
     void ChangeIsExpandedNavigationViewItem(const winrt::NavigationViewItem& nvi, bool isExpanded);
     void ShowHideChildrenItemsRepeater(const winrt::NavigationViewItem& nvi);
+    winrt::NavigationViewItem FindLowestLevelContainerToDisplaySelectionIndicator();
     void UpdateIsChildSelectedForIndexPath(const winrt::IndexPath& ip, bool isChildSelected);
     void UpdateIsChildSelected(const winrt::IndexPath& prevIP, const winrt::IndexPath& nextIP);
     void CollapseAllMenuItems(winrt::NavigationViewPaneDisplayMode oldDisplayMode);
@@ -340,7 +341,7 @@ private:
 
     tracker_ref<winrt::UIElement> m_prevIndicator{ this };
     tracker_ref<winrt::UIElement> m_nextIndicator{ this };
-    tracker_ref<winrt::UIElement> m_parentIndicator{ this };
+    tracker_ref<winrt::UIElement> m_activeIndicator{ this };
 
     tracker_ref<winrt::FrameworkElement> m_togglePaneTopPadding{ this };
     tracker_ref<winrt::FrameworkElement> m_contentPaneTopPadding{ this };

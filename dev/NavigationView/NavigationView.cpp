@@ -1511,11 +1511,10 @@ void NavigationView::AnimateSelectionChangedToItem(const winrt::IInspectable& se
 // when the layout is invalidated as it's called in OnLayoutUpdated.
 void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem, const winrt::IInspectable& nextItem)
 {
-    auto const prevContainer = NavigationViewItemOrSettingsContentFromData(prevItem);
-    auto const nextContainer = NavigationViewItemOrSettingsContentFromData(nextItem);
+    winrt::UIElement prevIndicator = FindSelectionIndicator(prevItem);
+    winrt::UIElement nextIndicator = FindSelectionIndicator(nextItem);
 
-    winrt::UIElement prevIndicator = FindSelectionIndicator(prevContainer);
-    winrt::UIElement nextIndicator = FindSelectionIndicator(nextContainer);
+    prevIndicator = m_activeIndicator.get();
 
     bool haveValidAnimation = false;
     // It's possible that AnimateSelectionChanged is called multiple times before the first animation is complete.
@@ -1544,15 +1543,6 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
 
         if ((prevItem != nextItem) && paneContentGrid && prevIndicator && nextIndicator && SharedHelpers::IsAnimationsEnabled())
         {
-            // If SelectionIndicator of actual selected item is not visible, animate from the visible parent indicator
-            if (auto const parentIndicator = m_parentIndicator.get())
-            {
-                // We still need to hide the selectedItem indicator in case selection is changed while its kept hidden
-                prevIndicator.Opacity(0.0);
-                prevIndicator = parentIndicator;
-                m_parentIndicator.set(nullptr);
-            }
-
             // Make sure both indicators are visible and in their original locations
             ResetElementAnimationProperties(prevIndicator, 1.0f);
             ResetElementAnimationProperties(nextIndicator, 1.0f);
@@ -1647,6 +1637,8 @@ void NavigationView::AnimateSelectionChanged(const winrt::IInspectable& prevItem
             ResetElementAnimationProperties(prevIndicator, 0.0f);
             ResetElementAnimationProperties(nextIndicator, 1.0f);
         }
+
+        m_activeIndicator.set(nextIndicator);
 
         if (m_lastSelectedItemPendingAnimationInTopNav.get())
         {
@@ -1830,11 +1822,14 @@ bool NavigationView::ShouldPreserveNavigationViewRS3Behavior()
     return !m_backButton;
 }
 
-winrt::UIElement NavigationView::FindSelectionIndicator(const winrt::NavigationViewItem& container)
+winrt::UIElement NavigationView::FindSelectionIndicator(const winrt::IInspectable& item)
 {
-    if (container)
+    if (item)
     {
-        return winrt::get_self<NavigationViewItem>(container)->GetSelectionIndicator();
+        if (auto const container = NavigationViewItemOrSettingsContentFromData(item))
+        {
+            return winrt::get_self<NavigationViewItem>(container)->GetSelectionIndicator();
+        }
     }
     return nullptr;
 }
@@ -4608,6 +4603,39 @@ void NavigationView::ChangeIsExpandedNavigationViewItem(const winrt::NavigationV
     }
 }
 
+winrt::NavigationViewItem NavigationView::FindLowestLevelContainerToDisplaySelectionIndicator()
+{
+    auto indexIntoIndex = 0;
+    auto const selectedIndex = m_selectionModel.SelectedIndex();
+    if (selectedIndex && selectedIndex.GetSize() > 0)
+    {
+        if (auto container = GetContainerForIndex(selectedIndex.GetAt(indexIntoIndex)))
+        {
+            if (auto nvi = container.try_as<winrt::NavigationViewItem>())
+            {
+                auto nviImpl = winrt::get_self<NavigationViewItem>(nvi);
+                auto isRepeaterVisible = nviImpl->IsRepeaterVisible();
+                while (nvi && isRepeaterVisible && !nvi.IsSelected() && nvi.IsChildSelected())
+                {
+                    indexIntoIndex++;
+                    isRepeaterVisible = false;
+                    if (auto const repeater = nviImpl->GetRepeater())
+                    {
+                        if (auto const childContainer = repeater.TryGetElement(selectedIndex.GetAt(indexIntoIndex)))
+                        {
+                            nvi = childContainer.try_as<winrt::NavigationViewItem>();
+                            nviImpl = winrt::get_self<NavigationViewItem>(nvi);
+                            isRepeaterVisible = nviImpl->IsRepeaterVisible();
+                        }
+                    }
+                }
+                return nvi;
+            }
+        }
+    }
+    return nullptr;
+}
+
 void NavigationView::ShowHideChildrenItemsRepeater(const winrt::NavigationViewItem& nvi)
 {
     auto nviImpl = winrt::get_self<NavigationViewItem>(nvi);
@@ -4617,47 +4645,18 @@ void NavigationView::ShowHideChildrenItemsRepeater(const winrt::NavigationViewIt
         nvi.IsExpanded() ? m_lastItemExpandedIntoFlyout.set(nvi) : m_lastItemExpandedIntoFlyout.set(nullptr);
     }
 
-
-    // Keep track of selection indicator if selected item is being hidden/shown.
-    // If item is selected, then we do not have to handle showing selection indicator here.
-    if (!nvi.IsSelected())
+    // If SelectedItem is being hidden/shown, animate SelectionIndicator
+    if (!nvi.IsSelected() && nvi.IsChildSelected())
     {
         if (!nviImpl->IsRepeaterVisible() && nvi.IsChildSelected())
         {
-            if (auto const prevParentIndicator = m_parentIndicator.get())
-            {
-                prevParentIndicator.Opacity(0.0);
-            }
-            m_parentIndicator.set(FindSelectionIndicator(nvi));
             AnimateSelectionChanged(nullptr, nvi);
         }
-        else if (nvi.IsChildSelected() && nvi.IsExpanded())
+        else
         {
-            // Verify if child item has to display a selection indicator
-            if (auto const prevParentIndicator = m_parentIndicator.get())
-            {
-                prevParentIndicator.Opacity(0.0);
-            }
-            m_parentIndicator.set(nullptr);
-            auto const childrenRepeater = nviImpl->GetRepeater();
-            for (int i = 0; i < childrenRepeater.ItemsSourceView().Count(); i++)
-            {
-                if (auto const childContainer = childrenRepeater.TryGetElement(i))
-                {
-                    if (auto const childNVI = childContainer.try_as<winrt::NavigationViewItem>())
-                    {
-                        if (!winrt::get_self<NavigationViewItem>(childNVI)->IsRepeaterVisible() && childNVI.IsChildSelected())
-                        {
-                            m_parentIndicator.set(FindSelectionIndicator(childNVI));
-                            AnimateSelectionChanged(nullptr, childNVI);
-                            break;
-                        }
-                    }
-                }
-            }
+            AnimateSelectionChanged(nullptr, FindLowestLevelContainerToDisplaySelectionIndicator());
         }
     }
-
 
     nviImpl->RotateExpandCollapseChevron(nvi.IsExpanded());
 }
